@@ -1,0 +1,7 @@
+{
+  "db_host": "localhost",
+  "db_port": 5432,
+  "db_user": "postgres",
+  "db_password": "your_password_here",
+  "db_name": "bitcoin_intel"
+}

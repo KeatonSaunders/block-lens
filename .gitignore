@@ -1,0 +1,42 @@
+# Config files with credentials
+btc-observer/cmd/observer/config.json
+.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node.js
+node_modules/
+dist/
+.vite/
+*.log
+npm-debug.log*
+.env.local
+.env.*.local
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+DB Health Check Queries.txt
+*.png
+*.txt
+!README.txt
+notes/

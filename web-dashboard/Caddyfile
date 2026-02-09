@@ -1,0 +1,20 @@
+{$DOMAIN:localhost} {
+    # Analytics API (internal)
+    handle /api/* {
+        uri strip_prefix /api
+        reverse_proxy analytics:8000
+    }
+
+    # Observer Prometheus metrics (internal)
+    handle /metrics/* {
+        uri strip_prefix /metrics
+        reverse_proxy observer:9090
+    }
+
+    # React SPA
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}

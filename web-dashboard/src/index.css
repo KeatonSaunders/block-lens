@@ -1,0 +1,50 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-cream: #f5f3ef;
+  --color-cream-dark: #ebe8e2;
+  --color-black: #1a1a1a;
+  --color-gray: #6b6b6b;
+  --color-accent: #d4622b;
+}
+
+body {
+  background-color: var(--color-cream);
+  color: var(--color-black);
+  min-height: 100vh;
+  margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Typography utilities */
+.font-display {
+  font-family: 'Playfair Display', Georgia, serif;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-cream-dark);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #999;
+}

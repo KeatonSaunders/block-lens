@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database (internal only)
+  postgres:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-bitcoin_intel}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./btc-observer/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Bitcoin P2P Observer (Go) - internal only
+  observer:
+    build: ./btc-observer
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./btc-observer/config.docker.json:/app/config.json:ro
+    environment:
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    restart: unless-stopped
+
+  # Graph Analytics API (Python) - internal only, accessed via Caddy
+  analytics:
+    build: ./graph-analytics
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      DB_NAME: ${POSTGRES_DB:-bitcoin_intel}
+    restart: unless-stopped
+
+  # Web Dashboard + Caddy reverse proxy (only externally exposed service)
+  dashboard:
+    build:
+      context: ./web-dashboard
+    depends_on:
+      - analytics
+      - observer
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+
+volumes:
+  postgres_data:
+  caddy_data:
