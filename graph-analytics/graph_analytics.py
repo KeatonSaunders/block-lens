@@ -74,6 +74,7 @@ class TransactionGraph:
         self.graph = nx.DiGraph()
         self.address_metadata = {}
         self.transaction_timing = {}
+        self._pagerank_cache = None
         
     def add_transaction(
         self, 
@@ -122,11 +123,16 @@ class TransactionGraph:
         """
         Calculate PageRank for all addresses in the graph.
         Higher score = more central/influential address.
+        Results are cached and reused until the graph is rebuilt.
         """
         if len(self.graph) == 0:
             return {}
-            
+
+        if self._pagerank_cache is not None:
+            return self._pagerank_cache
+
         pagerank = nx.pagerank(self.graph, alpha=alpha, weight='weight')
+        self._pagerank_cache = pagerank
         logger.info(f"Calculated PageRank for {len(pagerank)} addresses")
         return pagerank
     
@@ -244,7 +250,7 @@ class RiskAnalyzer:
             logger.warning(f"Error checking double-spend for {address}: {e}")
             return {"count": 0, "tx_hashes": []}
 
-    def calculate_risk_score(self, address: str) -> RiskScore:
+    def calculate_risk_score(self, address: str, pagerank: Optional[Dict[str, float]] = None) -> RiskScore:
         """
         Calculate comprehensive risk score for an address.
         
@@ -282,7 +288,8 @@ class RiskAnalyzer:
             risk_factors["potential_mixer"] = 25
 
         # 3. Check network centrality (high PageRank - 15 pts)
-        pagerank = nx.pagerank(self.graph.graph, weight='weight')
+        if pagerank is None:
+            pagerank = self.graph.calculate_pagerank()
         pr_score = pagerank.get(address, 0)
         if pr_score > 0.01:
             risk_factors["high_centrality"] = min(pr_score * 1500, 15)
