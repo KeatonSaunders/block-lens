@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"database/sql"
+	"log"
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -108,6 +110,44 @@ var (
 		Help: "Current size of seen maps",
 	}, []string{"type"})
 )
+
+// SeedFromDB initializes counter metrics from historical database totals
+// so they don't reset to zero on restart.
+func SeedFromDB(db *sql.DB) {
+	var txReceived, txRecorded, conflicts, blocks float64
+	var blockHeight sql.NullFloat64
+	var invTx, invBlock float64
+
+	row := db.QueryRow(`
+		SELECT
+			COALESCE((SELECT COUNT(*) FROM transaction_observations), 0),
+			COALESCE((SELECT COUNT(*) FROM transactions), 0),
+			COALESCE((SELECT COUNT(*) FROM transaction_observations WHERE double_spend_flag = TRUE), 0),
+			COALESCE((SELECT COUNT(*) FROM blocks), 0),
+			(SELECT MAX(height) FROM blocks),
+			COALESCE((SELECT SUM(COALESCE(tx_announcements, 0)) FROM peer_connections), 0),
+			COALESCE((SELECT SUM(COALESCE(block_announcements, 0)) FROM peer_connections), 0)
+	`)
+
+	if err := row.Scan(&txReceived, &txRecorded, &conflicts, &blocks, &blockHeight, &invTx, &invBlock); err != nil {
+		log.Printf("Failed to seed metrics from database: %v", err)
+		return
+	}
+
+	TxReceived.Add(txReceived)
+	TxRecordedDB.Add(txRecorded)
+	TxConflicts.Add(conflicts)
+	BlocksReceived.Add(blocks)
+	InvTxAnnouncements.Add(invTx)
+	InvBlockAnnouncements.Add(invBlock)
+
+	if blockHeight.Valid {
+		BlockHeight.Set(blockHeight.Float64)
+	}
+
+	log.Printf("Seeded metrics from DB: %d tx received, %d recorded, %d blocks, height %.0f",
+		int(txReceived), int(txRecorded), int(blocks), blockHeight.Float64)
+}
 
 // corsHandler wraps a handler with CORS headers
 func corsHandler(next http.Handler) http.Handler {

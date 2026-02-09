@@ -30,6 +30,9 @@ func main() {
 	}
 	logger.Log.Info().Msg("Connected to database")
 
+	// Seed Prometheus counters from historical DB totals
+	metrics.SeedFromDB(db.Conn())
+
 	// Start Prometheus metrics server
 	metrics.StartMetricsServer(":9090")
 	logger.Log.Info().Str("addr", ":9090").Msg("Prometheus metrics server started")
