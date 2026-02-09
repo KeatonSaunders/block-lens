@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS transaction_inputs (
     prev_output_idx BIGINT NOT NULL,
     value_satoshis  BIGINT,
     script_sig      BYTEA,
+    address         VARCHAR(100)
     PRIMARY KEY (tx_hash, input_index)
 );
 
