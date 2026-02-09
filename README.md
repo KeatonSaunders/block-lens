@@ -48,9 +48,9 @@ Real-time Bitcoin network monitoring and transaction graph analytics. Connects d
                                    │
                     ┌──────────────▼──────────────┐
                     │   Caddy (reverse proxy +    │
-                    │    automatic HTTPS)          │
+                    │    automatic HTTPS)         │
                     │   (ports 80/443 — only      │
-                    │    externally exposed)       │
+                    │    externally exposed)      │
                     │                             │
                     │  /        → React SPA       │
                     │  /api/*   → Analytics API   │
