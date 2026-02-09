@@ -40,3 +40,4 @@ DB Health Check Queries.txt
 *.txt
 !README.txt
 notes/
+!requirements.txt

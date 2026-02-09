@@ -27,9 +27,6 @@ RUN apk add --no-cache ca-certificates tzdata
 # Copy binary from builder
 COPY --from=builder /app/observer .
 
-# Copy config (will be overridden by mount in docker-compose)
-COPY cmd/observer/config.json .
-
 EXPOSE 9090
 
 CMD ["./observer"]
