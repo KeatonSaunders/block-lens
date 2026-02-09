@@ -333,18 +333,56 @@ async def get_high_risk_addresses(top_n: int = 10):
     if not risk_analyzer:
         raise HTTPException(status_code=503, detail="Risk analyzer not initialized")
 
-    # Get top PageRank addresses and calculate their risk
     pagerank = transaction_graph.calculate_pagerank()
-    sorted_addrs = sorted(pagerank.items(), key=lambda x: x[1], reverse=True)[:50]
+
+    # Build a broad candidate pool from multiple signals
+    candidates = set()
+
+    # 1. Top PageRank addresses (high centrality)
+    sorted_by_pr = sorted(pagerank.items(), key=lambda x: x[1], reverse=True)[:50]
+    candidates.update(addr for addr, _ in sorted_by_pr)
+
+    # 2. Addresses involved in double-spend attempts
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT address FROM (
+                SELECT tout.address
+                FROM transaction_observations obs
+                JOIN transaction_outputs tout ON obs.tx_hash = tout.tx_hash
+                WHERE obs.double_spend_flag = TRUE AND tout.address IS NOT NULL
+                UNION
+                SELECT prev_out.address
+                FROM transaction_observations obs
+                JOIN transaction_inputs tin ON obs.tx_hash = tin.tx_hash
+                JOIN transaction_outputs prev_out
+                    ON tin.prev_tx_hash = prev_out.tx_hash
+                    AND tin.prev_output_idx = prev_out.output_index
+                WHERE obs.double_spend_flag = TRUE AND prev_out.address IS NOT NULL
+            ) ds_addrs
+        """)
+        candidates.update(row["address"] for row in cur.fetchall())
+        cur.close()
+        conn.close()
+    except Exception:
+        pass
+
+    # 3. Addresses with high in+out degree (potential mixers)
+    for node in transaction_graph.graph.nodes():
+        in_deg = transaction_graph.graph.in_degree(node)
+        out_deg = transaction_graph.graph.out_degree(node)
+        if in_deg > 50 and out_deg > 50:
+            candidates.add(node)
 
     risks = []
-    for addr, pr_score in sorted_addrs:
+    for addr in candidates:
         try:
             risk = risk_analyzer.calculate_risk_score(addr)
             risks.append({
                 "address": addr,
                 "risk_score": risk.score,
-                "pagerank": pr_score,
+                "pagerank": pagerank.get(addr, 0),
                 "factors": risk.risk_factors,
                 "explanation": risk.explanation
             })
