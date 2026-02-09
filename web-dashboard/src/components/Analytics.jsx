@@ -232,21 +232,21 @@ export default function Analytics() {
                 <div className="flex items-start gap-6">
                   <div
                     className={`text-5xl font-display ${
-                      searchResult.risk.score < 0.3
+                      searchResult.risk.score < 30
                         ? 'text-green-600'
-                        : searchResult.risk.score < 0.7
+                        : searchResult.risk.score < 70
                         ? 'text-amber-600'
                         : 'text-red-600'
                     }`}
                   >
-                    {(searchResult.risk.score * 100).toFixed(0)}%
+                    {searchResult.risk.score.toFixed(0)}%
                   </div>
                   <div className="flex-1">
                     <div className="text-gray-600 mb-3">{searchResult.risk.explanation}</div>
                     <div className="flex flex-wrap gap-2">
                       {Object.entries(searchResult.risk.risk_factors).map(([factor, value]) => (
                         <span key={factor} className="border border-black/20 px-3 py-1 text-sm font-mono">
-                          {factor}: {(value * 100).toFixed(0)}%
+                          {factor}: {value.toFixed(0)}%
                         </span>
                       ))}
                     </div>
@@ -461,11 +461,11 @@ export default function Analytics() {
                     </td>
                     <td className="py-3">
                       <span className={`font-mono font-medium ${
-                        item.risk_score > 0.7 ? 'text-red-600' :
-                        item.risk_score > 0.4 ? 'text-amber-600' :
+                        item.risk_score > 70 ? 'text-red-600' :
+                        item.risk_score > 40 ? 'text-amber-600' :
                         'text-green-600'
                       }`}>
-                        {(item.risk_score * 100).toFixed(0)}%
+                        {item.risk_score.toFixed(0)}%
                       </span>
                     </td>
                     <td className="py-3 text-gray-500 font-mono text-xs">{item.pagerank.toFixed(6)}</td>
