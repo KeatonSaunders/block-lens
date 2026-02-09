@@ -378,7 +378,7 @@ async def get_high_risk_addresses(top_n: int = 10):
     risks = []
     for addr in candidates:
         try:
-            risk = risk_analyzer.calculate_risk_score(addr)
+            risk = risk_analyzer.calculate_risk_score(addr, pagerank=pagerank)
             risks.append({
                 "address": addr,
                 "risk_score": risk.score,

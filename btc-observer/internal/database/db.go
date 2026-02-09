@@ -78,6 +78,10 @@ func NewFromConfig(cfg *Config) (*DB, error) {
 	return New(cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName)
 }
 
+func (db *DB) Conn() *sql.DB {
+	return db.conn
+}
+
 func (db *DB) Close() error {
 	return db.conn.Close()
 }
