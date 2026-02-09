@@ -53,12 +53,12 @@ class PathResponse(BaseModel):
 
 import asyncio
 import logging
-import time
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("api")
 
 last_graph_update = None
+analytics_cache = {}
 
 
 def rebuild_graph():
@@ -139,24 +139,198 @@ def rebuild_graph():
 
         log.info(f"Graph rebuilt: {transaction_graph.graph.number_of_nodes()} nodes, {transaction_graph.graph.number_of_edges()} edges")
 
+        refresh_analytics_cache()
+
     except Exception as e:
         log.error(f"Failed to rebuild graph: {e}")
+
+
+def refresh_analytics_cache():
+    """Pre-compute all analytics results so endpoints serve instantly."""
+    import networkx as nx
+
+    # Stats
+    try:
+        graph = transaction_graph.graph
+        stats = {
+            "nodes": graph.number_of_nodes(),
+            "edges": graph.number_of_edges(),
+            "density": nx.density(graph) if graph.number_of_nodes() > 0 else 0,
+        }
+        if graph.number_of_nodes() > 0:
+            try:
+                stats["avg_degree"] = sum(dict(graph.degree()).values()) / graph.number_of_nodes()
+            except:
+                pass
+        analytics_cache["stats"] = stats
+    except Exception as e:
+        log.warning(f"Cache stats failed: {e}")
+
+    # PageRank (cache full sorted list; also used by high-risk below)
+    pagerank = {}
+    try:
+        pagerank = transaction_graph.calculate_pagerank()
+        sorted_ranks = sorted(pagerank.items(), key=lambda x: x[1], reverse=True)
+        analytics_cache["pagerank"] = [
+            {"address": addr, "pagerank": score} for addr, score in sorted_ranks
+        ]
+    except Exception as e:
+        log.warning(f"Cache pagerank failed: {e}")
+
+    # Communities
+    try:
+        communities = transaction_graph.find_communities()
+        analytics_cache["communities"] = {
+            "total_communities": len(communities),
+            "communities": [
+                {"id": i, "size": len(c), "addresses": list(c)[:10]}
+                for i, c in enumerate(communities)
+            ]
+        }
+    except Exception as e:
+        log.warning(f"Cache communities failed: {e}")
+
+    # High-risk addresses
+    try:
+        if risk_analyzer and pagerank:
+            candidates = set()
+            sorted_by_pr = sorted(pagerank.items(), key=lambda x: x[1], reverse=True)[:50]
+            candidates.update(addr for addr, _ in sorted_by_pr)
+
+            try:
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT DISTINCT address FROM (
+                        SELECT tout.address
+                        FROM transaction_observations obs
+                        JOIN transaction_outputs tout ON obs.tx_hash = tout.tx_hash
+                        WHERE obs.double_spend_flag = TRUE AND tout.address IS NOT NULL
+                        UNION
+                        SELECT prev_out.address
+                        FROM transaction_observations obs
+                        JOIN transaction_inputs tin ON obs.tx_hash = tin.tx_hash
+                        JOIN transaction_outputs prev_out
+                            ON tin.prev_tx_hash = prev_out.tx_hash
+                            AND tin.prev_output_idx = prev_out.output_index
+                        WHERE obs.double_spend_flag = TRUE AND prev_out.address IS NOT NULL
+                    ) ds_addrs
+                """)
+                candidates.update(row["address"] for row in cur.fetchall())
+                cur.close()
+                conn.close()
+            except Exception:
+                pass
+
+            for node in transaction_graph.graph.nodes():
+                in_deg = transaction_graph.graph.in_degree(node)
+                out_deg = transaction_graph.graph.out_degree(node)
+                if in_deg > 50 and out_deg > 50:
+                    candidates.add(node)
+
+            risks = []
+            for addr in candidates:
+                try:
+                    risk = risk_analyzer.calculate_risk_score(addr, pagerank=pagerank)
+                    risks.append({
+                        "address": addr,
+                        "risk_score": risk.score,
+                        "pagerank": pagerank.get(addr, 0),
+                        "factors": risk.risk_factors,
+                        "explanation": risk.explanation,
+                    })
+                except:
+                    pass
+            risks.sort(key=lambda x: x["risk_score"], reverse=True)
+            analytics_cache["high_risk"] = risks
+    except Exception as e:
+        log.warning(f"Cache high-risk failed: {e}")
+
+    # Country rankings
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                pc.country_code,
+                pc.region,
+                COUNT(DISTINCT obs.tx_hash) as first_seen_count,
+                COUNT(DISTINCT pc.peer_addr) as peer_count
+            FROM peer_connections pc
+            JOIN transaction_observations obs ON pc.peer_addr = obs.first_peer_addr
+            WHERE pc.country_code IS NOT NULL
+            GROUP BY pc.country_code, pc.region
+            ORDER BY first_seen_count DESC
+            LIMIT 20
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        analytics_cache["country_rankings"] = {
+            "rankings": [
+                {
+                    "country_code": row["country_code"],
+                    "region": row["region"],
+                    "first_seen_count": row["first_seen_count"],
+                    "peer_count": row["peer_count"],
+                }
+                for row in rows
+            ]
+        }
+    except Exception as e:
+        log.warning(f"Cache country-rankings failed: {e}")
+
+    # Propagation stats
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                pc.region,
+                COUNT(*) as observation_count,
+                AVG(pe.delay_from_first_ms) as avg_delay_ms,
+                MIN(pe.delay_from_first_ms) as min_delay_ms,
+                MAX(pe.delay_from_first_ms) as max_delay_ms
+            FROM propagation_events pe
+            JOIN peer_connections pc ON pe.peer_addr = pc.peer_addr
+            WHERE pc.region IS NOT NULL
+            GROUP BY pc.region
+            ORDER BY observation_count DESC
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        analytics_cache["propagation_stats"] = {
+            "by_region": [
+                {
+                    "region": row["region"],
+                    "observation_count": row["observation_count"],
+                    "avg_delay_ms": float(row["avg_delay_ms"]) if row["avg_delay_ms"] else 0,
+                    "min_delay_ms": row["min_delay_ms"],
+                    "max_delay_ms": row["max_delay_ms"],
+                }
+                for row in rows
+            ]
+        }
+    except Exception as e:
+        log.warning(f"Cache propagation-stats failed: {e}")
+
+    log.info("Analytics cache refreshed")
 
 
 async def graph_rebuild_task():
     """Background task to rebuild graph every 2 minutes"""
     while True:
         await asyncio.sleep(120)  # 2 minutes
-        rebuild_graph()
+        await asyncio.to_thread(rebuild_graph)
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Load transaction data with retry, then start background rebuild."""
+async def startup_rebuild():
+    """Initial graph build with retries, runs without blocking the event loop."""
     max_retries = 10
     for attempt in range(1, max_retries + 1):
         try:
-            rebuild_graph()
+            await asyncio.to_thread(rebuild_graph)
             break
         except Exception as e:
             if attempt == max_retries:
@@ -164,7 +338,13 @@ async def startup_event():
             else:
                 wait = min(attempt * 2, 10)
                 log.warning(f"Startup attempt {attempt}/{max_retries} failed: {e}. Retrying in {wait}s...")
-                time.sleep(wait)
+                await asyncio.sleep(wait)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Kick off startup rebuild and periodic refresh without blocking."""
+    asyncio.create_task(startup_rebuild())
     asyncio.create_task(graph_rebuild_task())
 
 
@@ -233,11 +413,11 @@ async def find_path(request: PathRequest):
 @app.get("/pagerank")
 async def get_pagerank(top_n: int = 10):
     """Get top addresses by PageRank"""
+    if "pagerank" in analytics_cache:
+        return {"top_addresses": analytics_cache["pagerank"][:top_n]}
+
     pagerank = transaction_graph.calculate_pagerank()
-    
-    # Sort and return top N
     sorted_ranks = sorted(pagerank.items(), key=lambda x: x[1], reverse=True)[:top_n]
-    
     return {
         "top_addresses": [
             {"address": addr, "pagerank": score}
@@ -249,15 +429,17 @@ async def get_pagerank(top_n: int = 10):
 @app.get("/communities")
 async def get_communities():
     """Identify transaction communities"""
+    if "communities" in analytics_cache:
+        return analytics_cache["communities"]
+
     communities = transaction_graph.find_communities()
-    
     return {
         "total_communities": len(communities),
         "communities": [
             {
                 "id": i,
                 "size": len(community),
-                "addresses": list(community)[:10]  # Return first 10 addresses
+                "addresses": list(community)[:10]
             }
             for i, community in enumerate(communities)
         ]
@@ -267,29 +449,30 @@ async def get_communities():
 @app.get("/stats")
 async def get_stats():
     """Get overall graph statistics"""
+    if "stats" in analytics_cache:
+        return analytics_cache["stats"]
+
     import networkx as nx
-
     graph = transaction_graph.graph
-
     stats = {
         "nodes": graph.number_of_nodes(),
         "edges": graph.number_of_edges(),
         "density": nx.density(graph) if graph.number_of_nodes() > 0 else 0,
     }
-
     if graph.number_of_nodes() > 0:
-        # Calculate additional stats (can be expensive)
         try:
             stats["avg_degree"] = sum(dict(graph.degree()).values()) / graph.number_of_nodes()
         except:
             pass
-
     return stats
 
 
 @app.get("/country-rankings")
 async def get_country_rankings():
     """Get countries ranked by first-seen transaction observations"""
+    if "country_rankings" in analytics_cache:
+        return analytics_cache["country_rankings"]
+
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -330,6 +513,9 @@ async def get_country_rankings():
 @app.get("/high-risk-addresses")
 async def get_high_risk_addresses(top_n: int = 10):
     """Get addresses with highest risk scores"""
+    if "high_risk" in analytics_cache:
+        return {"high_risk_addresses": analytics_cache["high_risk"][:top_n]}
+
     if not risk_analyzer:
         raise HTTPException(status_code=503, detail="Risk analyzer not initialized")
 
@@ -397,6 +583,9 @@ async def get_high_risk_addresses(top_n: int = 10):
 @app.get("/propagation-stats")
 async def get_propagation_stats():
     """Get transaction propagation statistics by region"""
+    if "propagation_stats" in analytics_cache:
+        return analytics_cache["propagation_stats"]
+
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
